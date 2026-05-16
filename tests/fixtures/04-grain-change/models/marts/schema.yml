@@ -1,0 +1,8 @@
+version: 2
+models:
+  - name: dim_customers
+    description: "One row per customer. Grain: customer_id."
+    columns:
+      - name: customer_id
+        description: "Primary key — unique per customer"
+      - name: lifetime_value
