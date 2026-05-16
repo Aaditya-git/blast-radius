@@ -1,0 +1,4 @@
+name: fixture_06
+version: '1.0.0'
+profile: fixture_06
+model-paths: ["models"]
