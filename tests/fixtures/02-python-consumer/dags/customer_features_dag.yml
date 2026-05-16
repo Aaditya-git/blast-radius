@@ -1,0 +1,14 @@
+dag_id: customer_features
+schedule_interval: "@daily"
+default_args:
+  owner: data-eng
+tasks:
+  - task_id: extract_age_features
+    python_callable: extract_age_features
+    op_kwargs:
+      feature_columns:
+        - customer_id
+        - customer_age
+        - age_decade
+      source_table: analytics.dim_customers
+      target_table: analytics.customer_age_features
