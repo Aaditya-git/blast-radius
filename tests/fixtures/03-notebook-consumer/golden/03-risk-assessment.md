@@ -3,7 +3,7 @@
 | Consumer | Criticality | Severity | Owner |
 |---|---|---|---|
 | `dim_customers.sql` | Unknown (no env hints) | Will-break | Unknown (no CODEOWNERS) |
-| `eda.ipynb` | Dev (notebook) | Will-break | Unknown (no CODEOWNERS) |
+| `eda.ipynb` | Dev (notebook) | Will-break (runtime) | Unknown (no CODEOWNERS) |
 
 ## Notes
 - The dbt model will fail at compile time

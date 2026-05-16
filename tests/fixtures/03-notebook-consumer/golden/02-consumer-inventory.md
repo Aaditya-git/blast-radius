@@ -13,7 +13,7 @@ Seed: `stg_customers` (contains changed column `customer_age`)
 ```
 stg_customers.customer_age (CHANGED)
 └── dim_customers.sql [dbt] — DIRECT — WILL-BREAK
-    └── eda.ipynb [notebook] — TRANSITIVE depth 2 — WILL-BREAK
+    └── eda.ipynb [notebook] — TRANSITIVE depth 2 — WILL-BREAK (runtime)
 ```
 
 ## Consumer details
@@ -31,7 +31,7 @@ stg_customers.customer_age (CHANGED)
 - **Path:** `notebooks/eda.ipynb` (code cell, SQL string lines 6-8, DataFrame access line 18)
 - **Stack:** notebook
 - **Impact:** TRANSITIVE (depth 2, via `dim_customers`)
-- **Break classification:** WILL-BREAK
+- **Break classification:** WILL-BREAK (runtime)
 - **Usage:** SELECT + WHERE + DataFrame column access (4 references in SQL string and Python)
 - **Snippet:** `customer_age,` in SELECT; `customer_age` in CASE and WHERE; `df['customer_age']` in plot cell
 - **Column explicitly referenced:** Yes
