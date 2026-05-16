@@ -32,6 +32,21 @@ Announce: `Repo contains N candidate files.`
 - **N ≤ 300 → small-repo mode:** read every file upfront to build the full graph (see below), then go to Phase 2.
 - **N > 300 → large-repo mode:** build the graph lazily via BFS-grep (see below), then go to Phase 2.
 
+#### Step 1b — Detect active extensions
+
+Before any grep, find which of the supported extensions actually exist in the repo:
+
+```bash
+find <repo_root> -type f \( -name "*.sql" -o -name "*.py" -o -name "*.yml" -o -name "*.yaml" \
+  -o -name "*.ipynb" -o -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
+  -o -name "*.java" -o -name "*.kt" -o -name "*.go" -o -name "*.rb" \
+  -o -name "*.json" -o -name "*.toml" \) \
+  | grep -vE "(\.git|node_modules|\.venv|/dist/|/build/|__pycache__)" \
+  | sed 's/.*\.//' | sort -u
+```
+
+Store the result as `active_extensions`. Use **only** these extensions in all subsequent `find` and `grep --include` calls. Do not pass `--include` flags for extensions not present in the repo.
+
 ---
 
 #### Extraction rules (used in both modes)
@@ -107,12 +122,16 @@ files_read = {}                     # path → extracted metadata
 
 **BFS loop — repeat until frontier is empty:**
 
-1. Run one grep across all candidate files for every name in `frontier`:
+1. Run one grep across all candidate files for every name in `frontier`, using only the `active_extensions` detected in Step 1b:
    ```bash
    grep -rlE "<name1>|<name2>|..." <repo_root> \
-     --include="*.sql" --include="*.py" --include="*.yml" --include="*.yaml" \
-     --include="*.ipynb" --include="*.ts" --include="*.tsx" --include="*.js" \
-     --include="*.json" --include="*.toml" \
+     <--include="*.<ext>" for each ext in active_extensions> \
+     | grep -vE "(\.git|node_modules|\.venv|/dist/|/build/|__pycache__)"
+   ```
+   Example: if only `.sql` and `.yml` exist, the command becomes:
+   ```bash
+   grep -rlE "<name1>|<name2>|..." <repo_root> \
+     --include="*.sql" --include="*.yml" \
      | grep -vE "(\.git|node_modules|\.venv|/dist/|/build/|__pycache__)"
    ```
    Announce: `Wave N: searching for [name1, name2, ...] — grep matched M files.`
