@@ -54,6 +54,7 @@ Use these extraction rules per file type:
 - **YAML**: look for table names in `sql:` fields, `source_table:`, `target_table:`, `table:`, `dataset:`, `op_kwargs` keys
 - **Python DAGs** (`.py` with `from airflow`): look for `sql=`, `source_table=`, `provide_context=True` with downstream table references
 - **Task dependencies**: if a task triggers a callable that reads/writes a table, inherit those I/O relationships
+- **CRITICAL — graph position for callable-based tasks**: if a DAG task references a `python_callable` (e.g., `python_callable: extract_age_features`), the DAG is DOWNSTREAM of that callable file in the dependency graph — not a sibling. Do NOT treat the DAG's `source_table` or `op_kwargs` table references as a direct edge from the table to the DAG. The correct chain is: `table → callable_file → dag_file`. The DAG's output in the graph is whatever the callable writes. If the callable is also in the repo, add the edge `callable_output → dag_file`. If the callable is not in the repo (external), treat the DAG's table references as direct inputs.
 
 #### TypeScript / JavaScript (`.ts`, `.tsx`, `.js`, `.jsx`)
 - **Inputs**: table names in:

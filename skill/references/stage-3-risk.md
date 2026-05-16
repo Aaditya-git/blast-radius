@@ -15,10 +15,11 @@ For each consumer in the inventory, score three dimensions.
 - **Unknown** — no environmental hints
 
 ### Severity
-Based on the **Usage** field from Stage 2:
-- **Will-break** — SELECT, WHERE, JOIN usages of a renamed/dropped column or table
-- **May-break** — usage in a comment, conditional, or context that may or may not be hit
-- **Will-go-stale** — schema docs that reference the old name (no compile failure but documentation drift)
+Based on the **Usage** and **Break classification** fields from Stage 2:
+- **Will-break** — SELECT, WHERE, JOIN usages of a renamed/dropped column; also any orchestration node (Airflow DAG, Prefect flow, cron job) that executes a will-break callable — the DAG *runs* the broken pipeline, so it breaks too
+- **Will-break (runtime)** — Python, Spark, or notebook consumers: no compile-time error, but will fail at runtime when the column is not found; flag explicitly so the team knows the failure is deferred
+- **May-break** — usage in a comment, conditional, or context that may or may not be hit at runtime
+- **Will-go-stale** — schema docs, README references, or config values that name the old column but do not execute code (no runtime failure, but documentation or config drifts from reality)
 - **Safe** — comment-only or unrelated coincidental match
 
 ### Owner
