@@ -1,0 +1,16 @@
+version: 2
+models:
+  - name: dim_customers
+    columns:
+      - name: customer_id
+      - name: full_name
+      - name: customer_age
+      - name: age_bucket
+      - name: signup_date
+  - name: fct_orders
+    columns:
+      - name: order_id
+      - name: customer_id
+      - name: customer_age
+      - name: order_total
+      - name: order_date
