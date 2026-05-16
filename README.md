@@ -8,10 +8,10 @@ Breaking changes to data (column renames, model removals, grain changes, metric 
 
 ```
 stg_customers.customer_age renamed
-└── dim_customers [dbt] — direct consumer                ← grep finds this
-    └── revenue_pipeline.py [Python] — reads dim_customers  ← grep misses this
-        └── daily_dag.yml [Airflow] — triggers the pipeline    ← grep misses this
-            └── exec_dashboard [downstream] — reads the output    ← grep misses this
+└── dim_customers [dbt] — DIRECT consumer              ← grep finds this
+    └── revenue_pipeline.py [Python]                   ← grep misses this
+        └── daily_dag.yml [Airflow]                    ← grep misses this
+            └── exec_dashboard [downstream]            ← grep misses this
 ```
 
 No existing tool traces blast radius across all the layers a data system spans. `blast-radius` does.
@@ -20,44 +20,62 @@ No existing tool traces blast radius across all the layers a data system spans. 
 
 Invoke the skill when you're about to make a breaking change. Claude walks through five disciplined stages:
 
-1. **Classify** — categorizes the change (structural / semantic / infrastructural; breaking / additive / safe)
-2. **Trace** — builds a full dependency graph of the repo, then traverses it to find every impacted consumer at every depth — direct and transitive, across every file type
-3. **Assess** — scores each consumer by criticality (prod / staging / dev), severity (will-break / silent-propagation / transitive-risk), and owner
-4. **Plan** — generates a concrete migration strategy (hard cut / coordinated update / deprecation window / versioned alias)
-5. **Communicate** — drafts ready-to-send Slack messages, PR description, and changelog entry
+| Stage | Output |
+|---|---|
+| 1. Classify | Change kind (structural / semantic / infrastructural), severity (breaking / additive / safe), surface |
+| 2. Trace | Full dependency graph → BFS traversal → impact tree at every depth, across every file type |
+| 3. Assess | Each consumer scored: criticality (prod / staging / dev), severity (will-break / silent-propagation / transitive-risk), owner |
+| 4. Plan | Concrete migration strategy with exact file/line edits, rollback triggers, timeline |
+| 5. Communicate | Ready-to-send Slack message, PR description, changelog entry |
 
-Each stage produces a Markdown artifact in `docs/data-changes/<YYYY-MM-DD>-<change-slug>/` — committed, visible in PRs, permanent audit trail.
+Each stage produces a Markdown artifact committed to `docs/data-changes/<YYYY-MM-DD>-<change-slug>/` — visible in PRs, permanent audit trail.
+
+## Real example: Jaffle Shop
+
+Running blast-radius against the real [dbt-labs/jaffle-shop](https://github.com/dbt-labs/jaffle-shop) repo on a `customer_name → full_name` column rename:
+
+**What `grep -r customer_name models/` finds:**
+```
+models/staging/stg_customers.sql:17:  name as customer_name
+models/marts/customers.yml:13:    - name: customer_name
+models/marts/customers.yml:45:      - name: customer_name
+```
+
+**What blast-radius finds:**
+
+```
+stg_customers.customer_name (CHANGED → full_name)
+└── customers.sql [dbt] — DIRECT — SILENT-PROPAGATION (SELECT *)
+    └── customers.yml [dbt doc + MetricFlow] — TRANSITIVE depth 2
+        ├── line 45: WILL-BREAK (MetricFlow dimension fails at query time)
+        └── line 13: WILL-GO-STALE (column doc becomes factually wrong)
+```
+
+`customers.sql` contains `select * from {{ ref('stg_customers') }}` — the rename propagates invisibly through the SELECT \*, silently changing the output schema of the `customers` mart. **Completely invisible to grep.** Any BI dashboard or ML pipeline reading `customers.customer_name` breaks post-deploy with no compile-time warning.
+
+See [`tests/runs/jaffle-shop/`](tests/runs/jaffle-shop/) for the full five-stage output.
 
 ## How Stage 2 works (the core)
 
 Stage 2 is not a grep. It builds a dependency graph first:
 
-1. **Graph construction** — scan every file in the repo, extract what each file reads and what it produces, build an adjacency map
+1. **Graph construction** — scan every file in the repo, extract what each file reads and produces, build an adjacency map
 2. **Seed** — add the changed object to the impact set
 3. **BFS traversal** — walk forward: any file that reads from an affected output is also affected, at every depth
-4. **Classify** — DIRECT (depth 1) vs TRANSITIVE (depth 2+), WILL-BREAK vs SILENT-PROPAGATION vs TRANSITIVE-RISK
+4. **Classify** — DIRECT (depth 1) vs TRANSITIVE (depth 2+); WILL-BREAK vs SILENT-PROPAGATION vs TRANSITIVE-RISK
 
-Output is an impact tree, not a flat list:
+## Stack coverage
 
-```
-stg_customers.customer_age (CHANGED)
-└── dim_customers.sql [dbt] — DIRECT — WILL-BREAK
-    └── extract_age_features.py [Python] — TRANSITIVE depth 2 — WILL-BREAK
-        └── customer_features_dag.yml [Airflow] — TRANSITIVE depth 3 — TRANSITIVE-RISK
-```
-
-## Stack coverage (universal)
-
-Every file type in the repo is analyzed — not just a predefined list of extensions.
+Every file type in the repo is analyzed — not a predefined list of extensions.
 
 | Stack | How dependencies are extracted |
 |---|---|
-| dbt | `ref('model')`, `source('db', 'table')` → model name = filename |
-| Raw SQL | `FROM`, `JOIN` table names; `CREATE VIEW/TABLE` as output |
-| Python | `spark.read.table`, `pd.read_sql`, SQLAlchemy, raw SQL strings; `saveAsTable`, `to_sql` as outputs |
-| Notebooks | same as Python, parsed from code cells |
-| Airflow YAML / Python DAGs | `sql:`, `source_table:`, `op_kwargs` table refs; `target_table:` as output |
-| TypeScript / JavaScript | Knex `.from()`, Prisma models, template SQL strings |
+| dbt | `ref('model')`, `source('db', 'table')` |
+| Raw SQL | `FROM`, `JOIN`, `CREATE VIEW/TABLE` |
+| Python | `spark.read.table`, `pd.read_sql`, SQLAlchemy, raw SQL strings |
+| Notebooks | Same as Python, parsed from code cells |
+| Airflow | `sql:`, `source_table:`, `op_kwargs` table refs |
+| TypeScript / JS | Knex `.from()`, Prisma models, template SQL |
 | Java / Kotlin | JDBC strings, Hibernate `@Table`, JPA `@Query` |
 | Go | `db.Query`, GORM `.Table()` |
 | Ruby | ActiveRecord `from()`, `joins()`, raw SQL |
@@ -70,28 +88,62 @@ Every file type in the repo is analyzed — not just a predefined list of extens
 cp -r skill/ ~/.claude/skills/blast-radius/
 ```
 
-Then open Claude Code in any repo and describe what you want to change:
+Open Claude Code in your repo:
 
 ```
 > Use the blast-radius skill. I want to rename customer_age to customer_age_years in stg_customers.
 ```
 
-Claude confirms the change, builds the dependency graph, traverses it, and walks through all five stages with a "continue?" pause between each.
+Or trigger it implicitly:
+- *"what depends on this model?"*
+- *"blast radius of dropping orders_v1"*
+- *"what will break if I change the grain of dim_customers?"*
+
+Claude confirms the change, builds the dependency graph, and walks through all five stages. After each stage it pauses and asks "continue?" — you can stop, edit the artifact, or rerun a stage.
+
+Artifacts are written to:
+```
+docs/data-changes/<YYYY-MM-DD>-<change-slug>/
+├── 01-change-classification.md
+├── 02-consumer-inventory.md
+├── 03-risk-assessment.md
+├── 04-migration-plan.md
+└── 05-stakeholder-comms.md
+```
 
 ## Design principles
 
 - **Zero config** — works on any repo without setup or instrumentation
 - **Transitive by default** — finds what grep misses; the impact tree shows the full propagation chain
-- **Universal** — every file type in the repo, not a fixed list of extensions
+- **Universal** — every file type, not a fixed extension list
 - **Transparent** — every graph construction step is announced; every classification shows its reasoning
 - **Errs toward over-reporting** — false positives are cheap; false negatives are catastrophic
 - **Stage-independent** — invoke a single stage when that's all you need
 
-## Install
+## Repo layout
 
-See [INSTALL.md](INSTALL.md).
+```
+skill/                      ← install this to ~/.claude/skills/blast-radius/
+  SKILL.md                  ← skill entry point and workflow
+  references/
+    stage-1-classify.md
+    stage-2-trace.md
+    stage-3-risk.md
+    stage-4-migrate.md
+    stage-5-comms.md
+tests/
+  fixtures/                 ← 7 test scenarios with golden artifacts
+    01-dbt-rename/
+    02-python-consumer/
+    03-notebook-consumer/
+    04-grain-change/
+    05-safe-refactor/
+    06-ambiguous-intent/
+    07-empty-repo/
+  runs/                     ← actual skill output for each scenario
+    jaffle-shop/            ← real-world validation run
+```
 
-## Spec and plan
+## Installation
 
-- Design spec: [`docs/superpowers/specs/2026-05-15-blast-radius-design.md`](docs/superpowers/specs/2026-05-15-blast-radius-design.md)
-- Implementation plan: [`docs/superpowers/plans/2026-05-15-blast-radius.md`](docs/superpowers/plans/2026-05-15-blast-radius.md)
+See [INSTALL.md](INSTALL.md) for full install and usage options including dry run and single-stage modes.
