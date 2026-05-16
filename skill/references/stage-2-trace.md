@@ -12,89 +12,136 @@ This is not a grep for the changed column name. It is a graph traversal. A file 
 
 ## Algorithm
 
-### Phase 1 — Build the full dependency graph
+### Phase 1 — Build the dependency graph
 
-Scan every non-trivial file in the repo. Exclude: `.git`, `node_modules`, `.venv`, `dist`, `build`, `__pycache__`, `*.lock`, `*.log`.
+#### Step 1 — Repo size check
 
-For each file, extract:
+Run a single `find` to count candidate files (all `.sql`, `.py`, `.yml`, `.yaml`, `.ipynb`, `.ts`, `.tsx`, `.js`, `.jsx`, `.java`, `.kt`, `.go`, `.rb`, `.json`, `.toml` files, excluding `.git`, `node_modules`, `.venv`, `dist`, `build`, `__pycache__`):
+
+```bash
+find <repo_root> -type f \( -name "*.sql" -o -name "*.py" -o -name "*.yml" -o -name "*.yaml" \
+  -o -name "*.ipynb" -o -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \
+  -o -name "*.java" -o -name "*.kt" -o -name "*.go" -o -name "*.rb" \
+  -o -name "*.json" -o -name "*.toml" \) \
+  | grep -vE "(\.git|node_modules|\.venv|/dist/|/build/|__pycache__)" \
+  | wc -l
+```
+
+Announce: `Repo contains N candidate files.`
+
+- **N ≤ 300 → small-repo mode:** read every file upfront to build the full graph (see below), then go to Phase 2.
+- **N > 300 → large-repo mode:** build the graph lazily via BFS-grep (see below), then go to Phase 2.
+
+---
+
+#### Extraction rules (used in both modes)
+
+For each file read, extract the following using these rules per file type:
+
 - **What it reads (inputs)**: every table, model, or data source it depends on
-- **What it produces (outputs)**: the table, model, or view this file creates or represents
+- **What it produces (output)**: the table, model, or view this file creates or represents
 - **SELECT * flag**: whether it uses `SELECT *` or `SELECT alias.*` from an upstream source
 
-Use these extraction rules per file type:
+**dbt models** (`*.sql` containing `{{ ref() }}` or `{{ source() }}`):
+- Inputs: every `ref('model_name')` and `source('schema', 'table')`
+- Output: filename without `.sql`
+- SELECT * flag: true if file contains `select *` or `select [alias].*` from a ref/source
 
-#### dbt models (`*.sql` containing `{{ ref() }}` or `{{ source() }}`)
-- **Inputs**: every `ref('model_name')` → the model name; every `source('schema', 'table')` → the table name
-- **Output**: the filename without `.sql` — this becomes the referenceable model name downstream
-- **SELECT * flag**: true if file contains `select *` or `select [alias].*` from a ref/source
+**Raw SQL** (`.sql` without dbt jinja, or `CREATE VIEW` / `CREATE TABLE`):
+- Inputs: table names in `FROM <name>`, `JOIN <name>`, `INSERT INTO <name> SELECT ... FROM <other>`
+- Output: name from `CREATE VIEW <name>` or `CREATE TABLE <name>` (if present)
 
-#### Raw SQL (`.sql` without dbt jinja, or files with `CREATE VIEW` / `CREATE TABLE`)
-- **Inputs**: every table name in `FROM <name>`, `JOIN <name ON`, `INSERT INTO <name> SELECT ... FROM <other>`
-- **Output**: name from `CREATE VIEW <name>` or `CREATE TABLE <name>` (if present)
+**Python** (`.py`):
+- Inputs: `spark.read.table(...)`, `pd.read_sql(...)`, `pd.read_sql_table(...)`, SQLAlchemy `Table(...)`, raw SQL strings, f-strings with SQL patterns
+- Outputs: `df.write.saveAsTable(...)`, `df.to_sql(...)`, `spark.sql("INSERT INTO ...")`, `spark.sql("CREATE TABLE ...")`
 
-#### Python (`.py`)
-- **Inputs**: extract table/model names from:
-  - `spark.read.table("db.table")` or `spark.read.table("table")`
-  - `pd.read_sql("... FROM table ...", engine)` — parse the SQL string for table names
-  - `pd.read_sql_table("table", engine)`
-  - SQLAlchemy `Table("table", metadata)` or `session.query(ModelClass)` — map class name to snake_case table name
-  - Raw SQL strings assigned to variables: `sql = "SELECT ... FROM table"`
-  - f-strings and template strings with SQL patterns
-- **Outputs**: extract table/model names from:
-  - `df.write.saveAsTable("table")`
-  - `df.to_sql("table", engine)`
-  - `spark.sql("INSERT INTO table ...")` or `spark.sql("CREATE TABLE table AS ...")`
+**Notebooks** (`.ipynb`):
+- Parse the `source` array of every `"cell_type": "code"` cell, concatenate to a string, apply Python rules
 
-#### Notebooks (`.ipynb`)
-- Parse the `source` array of every cell with `"cell_type": "code"`, concatenate to a string
-- Apply the same Python extraction rules to the result
-- Inputs and outputs: same as Python rules above
+**Airflow / orchestration YAML and Python DAGs**:
+- YAML: table names in `sql:`, `source_table:`, `target_table:`, `table:`, `dataset:`, `op_kwargs` keys
+- Python DAGs (files with `from airflow`): `sql=`, `source_table=`, downstream table references
+- **CRITICAL — callable-based tasks**: if a DAG task has `python_callable: some_fn`, the DAG is DOWNSTREAM of the callable file, not a sibling. Chain is `table → callable_file → dag_file`. Do NOT draw a direct edge from the table to the DAG.
 
-#### Airflow / orchestration YAML and Python DAGs
-- **YAML**: look for table names in `sql:` fields, `source_table:`, `target_table:`, `table:`, `dataset:`, `op_kwargs` keys
-- **Python DAGs** (`.py` with `from airflow`): look for `sql=`, `source_table=`, `provide_context=True` with downstream table references
-- **Task dependencies**: if a task triggers a callable that reads/writes a table, inherit those I/O relationships
-- **CRITICAL — graph position for callable-based tasks**: if a DAG task references a `python_callable` (e.g., `python_callable: extract_age_features`), the DAG is DOWNSTREAM of that callable file in the dependency graph — not a sibling. Do NOT treat the DAG's `source_table` or `op_kwargs` table references as a direct edge from the table to the DAG. The correct chain is: `table → callable_file → dag_file`. The DAG's output in the graph is whatever the callable writes. If the callable is also in the repo, add the edge `callable_output → dag_file`. If the callable is not in the repo (external), treat the DAG's table references as direct inputs.
+**TypeScript / JavaScript** (`.ts`, `.tsx`, `.js`, `.jsx`):
+- Inputs: SQL template literals, Knex `.from()`/`.table()`, Prisma `prisma.model.findMany()` (camelCase → snake_case), Sequelize `Model.findAll()`
 
-#### TypeScript / JavaScript (`.ts`, `.tsx`, `.js`, `.jsx`)
-- **Inputs**: table names in:
-  - Template literals containing SQL: `` `SELECT ... FROM tablename` ``
-  - Knex: `.from('table')`, `.table('table')`, `.join('table', ...)`
-  - Prisma: `prisma.modelName.findMany()` — map camelCase model name to snake_case table
-  - Raw SQL strings: `'SELECT ... FROM table'`
-  - Sequelize: `Model.findAll()` — map model class to table
+**Java / Kotlin** (`.java`, `.kt`):
+- Inputs: JDBC strings, Hibernate `@Table(name=...)`, `@Query(...)`, MyBatis `<select>` tags
 
-#### Java (`.java`, `.kt`)
-- **Inputs**: table names in:
-  - JDBC strings: `"SELECT ... FROM table"`
-  - Hibernate/JPA `@Table(name = "table")` or `@Entity` with class name mapped to table
-  - `@Query("SELECT ... FROM table")` annotations
-  - MyBatis XML mapper `<select>` tags with table names
+**Go** (`.go`):
+- Inputs: `db.Query(...)`, `db.Exec(...)`, GORM `db.Table(...)`, `db.Model(&Struct{})`
 
-#### Go (`.go`)
-- **Inputs**: table names in:
-  - `db.Query("SELECT ... FROM table")`, `db.Exec("INSERT INTO table ...")`
-  - GORM: `db.Table("table")`, `db.Model(&StructName{})` — map struct to snake_case table
+**Ruby** (`.rb`):
+- Inputs: ActiveRecord `Model.from(...)`, `.joins(...)`, `connection.execute(...)`
 
-#### Ruby (`.rb`)
-- **Inputs**: table names in:
-  - ActiveRecord: `Model.from("table")`, `joins("JOIN table ON")` — map class name to snake_case table
-  - `ActiveRecord::Base.connection.execute("SELECT ... FROM table")`
-  - `where("table.column = ?", ...)`
-
-#### Config and manifest files (`.yml`, `.yaml`, `.json`, `.toml`)
-- Look for keys that reference table names: `table:`, `source_table:`, `target_table:`, `dataset:`, `table_name:`, `entity:`, `model:`
+**Config / manifest** (`.yml`, `.yaml`, `.json`, `.toml`):
+- Keys: `table:`, `source_table:`, `target_table:`, `dataset:`, `table_name:`, `entity:`, `model:`
 
 Build the graph as an adjacency list:
 
 ```
 dependency_graph[output_name] = [
-  { file: "path/to/consumer.ext", stack: "dbt|python|notebook|...", select_star: bool, output_name: "name_this_file_produces" }
+  { file: "path/to/consumer.ext", stack: "dbt|python|...", select_star: bool, output_name: "name_this_file_produces" }
 ]
 ```
 
-Announce before starting: `Building dependency graph across all file types in <repo_root>...`
-Print a running count as you go: `Graph: N objects mapped, M consumer edges found`
+---
+
+#### Small-repo mode (N ≤ 300)
+
+Read every candidate file. Extract inputs/outputs using the rules above. Build the complete `dependency_graph`. Announce when done: `Graph complete. N files read, M consumer edges found.`
+
+---
+
+#### Large-repo mode (N > 300) — BFS-grep
+
+Build the graph lazily. Only read files that grep confirms reference a known node. Never silently skip — every unread file is explicitly accounted for.
+
+**Initialize:**
+```
+frontier   = { seed_object_name }   # names to search for in this wave
+visited    = { seed_object_name }   # all names ever added to frontier
+files_read = {}                     # path → extracted metadata
+```
+
+**BFS loop — repeat until frontier is empty:**
+
+1. Run one grep across all candidate files for every name in `frontier`:
+   ```bash
+   grep -rlE "<name1>|<name2>|..." <repo_root> \
+     --include="*.sql" --include="*.py" --include="*.yml" --include="*.yaml" \
+     --include="*.ipynb" --include="*.ts" --include="*.tsx" --include="*.js" \
+     --include="*.json" --include="*.toml" \
+     | grep -vE "(\.git|node_modules|\.venv|/dist/|/build/|__pycache__)"
+   ```
+   Announce: `Wave N: searching for [name1, name2, ...] — grep matched M files.`
+
+2. For each matched file not already in `files_read`:
+   - Read the file
+   - Extract inputs, output, SELECT * flag using the rules above
+   - Add edges to `dependency_graph`
+   - Add to `files_read`
+
+3. Collect every new output name discovered this wave that is not already in `visited`. Add them to `visited`. These become the next `frontier`.
+
+4. If `frontier` is empty, stop.
+
+**After the loop — transparency report:**
+
+Run the same `find` from Step 1 to get the full candidate file list. Compute:
+- `files_read`: files grep matched and were read
+- `files_excluded`: candidate files not in `files_read`
+
+Announce:
+```
+Graph complete.
+  Files read:     N (matched at least one traversed node name)
+  Files excluded: M (no string match for any node in the traversal)
+  Dynamic SQL warning: files with runtime-constructed table names cannot be detected by static analysis — review manually if applicable.
+```
+
+A file in `files_excluded` contains no static string matching any model or table name discovered during traversal. It is not in the blast radius based on static analysis. The only undetectable case is dynamic SQL (e.g., `table = "dim_" + var`) — flag this in the Stage 2 artifact summary.
 
 ### Phase 2 — Seed the blast radius
 
