@@ -207,41 +207,50 @@ The skill errs toward over-reporting. A false positive (flagging a non-issue) is
 
 ## Testing strategy
 
-Given this is a Claude Code skill (Markdown + Claude reasoning, not a traditional program), testing focuses on **behavioral validation** against representative scenarios.
+Two levels, phased.
 
-### Fixture-based scenario tests
+### Level 1 — Manual fixture-based testing (v1 mandatory)
 
-A `tests/fixtures/` directory contains miniature repo snapshots representing common stacks:
+A `tests/fixtures/` directory contains miniature repos representing common stacks:
 - `dbt-project/` — small dbt repo with models, sources, schema.yml
 - `python-pipelines/` — Python files using pandas/Spark to read tables
 - `notebook-consumer/` — Jupyter notebook with SQL strings
 - `airflow-dags/` — sample Airflow DAG referencing tables
 - `mixed/` — combination of all of the above
+- `empty-repo/` — sanity case: skill should report zero consumers clearly
 
-Each fixture has a `golden/` subfolder containing the expected artifacts the skill should produce for a given test change. CI compares Claude's output against the golden files (allowing for prose variation but checking structured fields).
+A human invokes the skill against each fixture and verifies the artifacts are correct and useful.
 
-### Test cases
+### Level 2 — Automated behavioral testing (v2)
 
-1. **Column rename** in a dbt model — verifies dbt ref tracing
-2. **Column drop** referenced in Python pandas code — verifies Python detection
-3. **Grain change** in a fact table — verifies semantic classification
-4. **Model removal** with notebook consumers — verifies notebook scanning
-5. **Type change** (int → string) — verifies cross-stack impact assessment
-6. **No-op refactor** (variable rename internal to a model) — verifies the skill correctly identifies a safe change
-7. **Ambiguous change** — verifies the skill asks a clarifying question instead of guessing
+A test harness script invokes Claude with the skill loaded (via Anthropic SDK), saves the produced artifacts, and diffs them against a `golden/` directory of expected outputs. Allows prose variation but checks structured fields (consumer count, severity classifications, file paths). Deferred until skill behavior is stable.
 
-### Manual validation milestones
+### Base test cases (must pass in v1)
 
-- Hand-run the skill against a real-world open-source dbt project (e.g., a public Jaffle Shop variant) to confirm output usefulness.
-- Dogfood against the user's own projects.
+| # | Scenario | What it tests |
+|---|---|---|
+| 1 | Column rename in a dbt model with only dbt consumers | Basic dbt ref tracing |
+| 2 | Column drop in a SQL table, Python pipeline reads it | Cross-stack detection |
+| 3 | Model removal with notebook consumer | Notebook scanning |
+| 4 | Grain change in a fact table | Semantic classification (not just structural) |
+| 5 | No-op refactor (variable rename internal to a model) | No false alarms on non-breaking changes |
+| 6 | Ambiguous intent ("change the customer table") | Skill asks a clarifying question instead of guessing |
+| 7 | Zero consumers found | Skill flags clearly rather than implying safety |
+
+### Real-world validation milestones
+
+- Hand-run the skill against a public open-source dbt project (e.g., a Jaffle Shop variant) to confirm output usefulness on real code.
+- Dogfood on the user's own projects before publishing.
 
 ---
 
 ## Resolved design decisions
 
+- **v1 is pure Markdown.** The skill is a directory of Markdown files. No custom parsers, no install step, no runtime dependencies. Claude does the work using tools already available in a Claude Code session (grep, Read, file reads, ad-hoc Bash). If during testing we find Claude can't reliably handle a class of input (e.g., complex SQL CTEs), we add a thin helper script in v2 — not before.
 - **Dry-run mode (v1):** Yes. A `--dry-run` flag runs all stages and prints to stdout without writing artifacts. Useful for first-time users exploring what the skill does.
 - **Artifact code references:** Each artifact references changed code by file path + git SHA + line numbers, not by embedding diffable snapshots. Keeps artifacts small and survivable across rebases.
 - **v1 stack parsers:** dbt, raw SQL, Python, notebooks, Airflow YAML. BI tools and Dagster move to v2 (each needs a dedicated parser).
+- **Testing approach:** Manual fixture-based validation for v1. Automated behavioral harness (Anthropic SDK + golden-file diff) deferred to v2 once skill behavior is stable.
 
 ## Out of scope (v1)
 
