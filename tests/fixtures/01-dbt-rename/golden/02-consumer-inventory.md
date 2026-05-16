@@ -1,32 +1,57 @@
 # Stage 2 — Consumer Inventory
 
-## Search scope
-- Repo root: `tests/fixtures/01-dbt-rename`
-- Patterns searched: `customer_age` in `*.sql`, `*.py`, `*.yml`, `*.ipynb`
-- Files scanned: 4 SQL files, 1 YAML file
+## Dependency graph construction
+Scanned all files in `tests/fixtures/01-dbt-rename`. Extracted inputs/outputs per file:
+- `models/staging/stg_customers.sql` → produces: `stg_customers`; reads: `source('raw', 'customers')`
+- `models/marts/dim_customers.sql` → produces: `dim_customers`; reads: `ref('stg_customers')`
+- `models/marts/fct_orders.sql` → produces: `fct_orders`; reads: `source('raw', 'orders')`, `ref('stg_customers')`
+- `models/marts/schema.yml` → documents: `dim_customers`, `fct_orders` columns
 
-## Consumers found
+Seed: `stg_customers` (contains changed column `customer_age`)
 
-### dim_customers.sql (dbt model)
-- **Path:** `models/marts/dim_customers.sql:4`
+## Impact tree
+
+```
+stg_customers.customer_age (CHANGED)
+├── dim_customers.sql [dbt] — DIRECT — WILL-BREAK
+├── fct_orders.sql [dbt] — DIRECT — WILL-BREAK
+└── schema.yml [dbt doc] — DIRECT — WILL-GO-STALE
+```
+
+## Consumer details
+
+### dim_customers.sql (dbt)
+- **Path:** `models/marts/dim_customers.sql:4,6-8`
 - **Stack:** dbt
-- **Usage:** SELECT (direct reference)
+- **Impact:** DIRECT (depth 1, reads `ref('stg_customers')`)
+- **Break classification:** WILL-BREAK
+- **Usage:** SELECT (explicit reference on line 4; also in CASE expression lines 6-8)
 - **Snippet:** `customer_age,`
-- **Also:** `models/marts/dim_customers.sql:6-8` references `customer_age` in CASE expression for `age_bucket`
+- **Column explicitly referenced:** Yes
 
-### fct_orders.sql (dbt model)
+### fct_orders.sql (dbt)
 - **Path:** `models/marts/fct_orders.sql:4`
 - **Stack:** dbt
-- **Usage:** SELECT (via join)
+- **Impact:** DIRECT (depth 1, reads `ref('stg_customers')` via join)
+- **Break classification:** WILL-BREAK
+- **Usage:** SELECT (via join alias)
 - **Snippet:** `c.customer_age,`
+- **Column explicitly referenced:** Yes
 
 ### schema.yml (dbt schema doc)
-- **Path:** `models/marts/schema.yml:7, 14`
+- **Path:** `models/marts/schema.yml:7,14`
 - **Stack:** dbt
-- **Usage:** column documentation
-- **Snippet:** `- name: customer_age` (appears twice — under dim_customers and fct_orders)
+- **Impact:** DIRECT (depth 1)
+- **Break classification:** WILL-GO-STALE
+- **Usage:** DOCUMENTATION
+- **Snippet:** `- name: customer_age` (appears twice)
+- **Column explicitly referenced:** Yes
 
 ## Summary
-- Total consumers: 3 files, 5 references
-- Stacks affected: dbt only
-- No cross-repo dependencies detected (single-repo search)
+- Total impacted: 3 files across 1 stack
+- Direct consumers: 3
+- Transitive consumers: 0
+- Silent propagation (SELECT *): 0
+- Stacks affected: dbt
+- Max impact tree depth: 1
+- Cross-repo consumers: not visible in this search — verify separately

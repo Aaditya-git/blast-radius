@@ -1,25 +1,48 @@
 # Stage 2 — Consumer Inventory
 
-## Search scope
-- Repo root: `tests/fixtures/04-grain-change`
-- Patterns searched: `dim_customers` in `*.sql`, `*.py`, `*.yml`, `*.ipynb`
-- Files scanned: 2 SQL files, 1 YAML file
+## Dependency graph construction
+Scanned all files in `tests/fixtures/04-grain-change`. Extracted inputs/outputs per file:
+- `models/marts/dim_customers.sql` → produces: `dim_customers`; reads: `ref('stg_customers')`
+- `models/marts/fct_orders.sql` → produces: `fct_orders`; reads: `source('raw', 'orders')`, `ref('dim_customers')`
+- `models/marts/schema.yml` → documents: `dim_customers` (grain description)
 
-## Consumers found
+Seed: `dim_customers` (the model whose grain is changing)
 
-### fct_orders.sql (dbt model)
+## Impact tree
+
+```
+dim_customers (CHANGED — grain: customer → household)
+├── fct_orders.sql [dbt] — DIRECT — WILL-BREAK (silent data corruption)
+└── schema.yml [dbt doc] — DIRECT — WILL-GO-STALE
+```
+
+## Consumer details
+
+### fct_orders.sql (dbt)
 - **Path:** `models/marts/fct_orders.sql:7`
 - **Stack:** dbt
-- **Usage:** JOIN (joins dim_customers on customer_id — assumes one row per customer_id)
+- **Impact:** DIRECT (depth 1, reads `ref('dim_customers')`)
+- **Break classification:** WILL-BREAK (silent data corruption — no compile error)
+- **Usage:** JOIN (joins dim_customers on customer_id; assumes one row per customer_id)
 - **Snippet:** `join {{ ref('dim_customers') }} c using (customer_id)`
+- **Column explicitly referenced:** N/A (grain change — all columns affected)
+- **Note:** After the grain change, this join will fan out — one order row will match multiple household members, silently multiplying aggregations.
 
 ### schema.yml (dbt schema doc)
 - **Path:** `models/marts/schema.yml:3`
 - **Stack:** dbt
-- **Usage:** DOCUMENTATION (grain documented as customer-level)
+- **Impact:** DIRECT (depth 1)
+- **Break classification:** WILL-GO-STALE
+- **Usage:** DOCUMENTATION (grain description)
 - **Snippet:** `description: "One row per customer. Grain: customer_id."`
+- **Column explicitly referenced:** N/A
 
 ## Summary
-- Total consumers: 2 files, 2 references
-- Stacks affected: dbt only
-- Note: Semantic grain changes are particularly dangerous — JOIN consumers will not fail at compile time but will silently produce incorrect aggregations
+- Total impacted: 2 files across 1 stack
+- Direct consumers: 2
+- Transitive consumers: 0
+- Silent propagation (SELECT *): 0
+- Stacks affected: dbt
+- Max impact tree depth: 1
+- Semantic change warning: no compile errors will surface — failure mode is silent data corruption in any downstream aggregation or JOIN that assumed customer_id uniqueness
+- Cross-repo consumers: not visible in this search — verify separately
