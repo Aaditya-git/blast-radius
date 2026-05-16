@@ -4,7 +4,7 @@
 |---|---|---|---|
 | `dim_customers.sql` | Unknown (no env hints) | Will-break | Unknown (no CODEOWNERS) |
 | `fct_orders.sql` | Unknown (no env hints) | Will-break | Unknown (no CODEOWNERS) |
-| `schema.yml` | Documentation | Will-break (stale doc after rename) | Unknown |
+| `schema.yml` | Documentation | Will-go-stale | Unknown |
 
 ## Notes
 - Both downstream models reference `customer_age` in SELECT clauses — these will fail at compile time after the rename
