@@ -105,23 +105,36 @@ docs/data-changes/2026-05-15-rename-customer-age/
 
 **What Claude does:** Searches the codebase using stack-specific patterns.
 
-**v1 stack coverage:**
+**Stack coverage (universal — all file types in the repo):**
 
-| Stack | Patterns | Priority |
+| Stack | Input extraction | Output extraction |
 |---|---|---|
-| dbt | `ref('model')`, `source('db', 'table')`, `schema.yml` | v1 |
-| Raw SQL | direct table refs in `.sql` files (FROM/JOIN/INTO) | v1 |
-| Python | `pd.read_sql`, `spark.read.table`, SQLAlchemy ORM, raw SQL strings | v1 |
-| Notebooks | SQL strings in `.ipynb` code cells | v1 |
-| Orchestration | Airflow DAGs, Prefect flows, YAML configs | v1 |
-| BI tools | LookML, Tableau XML, Metabase JSON | v2 (each needs its own parser) |
+| dbt | `ref('model')`, `source('db', 'table')` | filename = model name |
+| Raw SQL | `FROM`, `JOIN` table names | `CREATE VIEW/TABLE` name |
+| Python | `spark.read.table`, `pd.read_sql`, SQLAlchemy, raw SQL strings | `saveAsTable`, `to_sql` |
+| Notebooks | same as Python, parsed from code cells | same as Python |
+| Airflow YAML / Python DAGs | `sql:`, `source_table:`, op_kwargs table refs | `target_table:` keys |
+| TypeScript / JavaScript | Knex `.from()`, Prisma models, template SQL strings | — |
+| Java / Kotlin | JDBC strings, Hibernate `@Table`, JPA `@Query` | — |
+| Go | `db.Query`, GORM `.Table()` | — |
+| Ruby | ActiveRecord `from()`, `joins()`, raw SQL | — |
+| Config files | `table:`, `source_table:`, `dataset:`, `entity:` keys | — |
+| BI tools | LookML, Tableau XML, Metabase JSON | v2 |
 | Dagster | asset graph | v2 |
 
-Search strategy is two-phase:
-1. **Fast grep** for the literal table/column name across the repo
-2. **Targeted parse** for each hit, using the right parser for the file type, to extract usage context (SELECT vs. WHERE vs. JOIN vs. assignment)
+**Search strategy is graph traversal, not grep:**
+1. **Build dependency graph** — parse every file in the repo to extract inputs and outputs, building a directed graph of data flow
+2. **Seed** — add the changed object (table/model) to the impact set
+3. **BFS traversal** — walk forward through the graph, adding every downstream consumer at every depth
+4. **Classify each node** — DIRECT vs TRANSITIVE, WILL-BREAK vs SILENT-PROPAGATION vs TRANSITIVE-RISK vs WILL-GO-STALE
+5. **Output impact tree** — showing full propagation paths with depth, not a flat list
 
-**Artifact:** `02-consumer-inventory.md` — each consumer with file path, line number, snippet, detected stack, and usage context.
+**What this finds that grep misses:**
+- Transitive consumers (models downstream of direct consumers)
+- `SELECT *` silent propagation (column inherited without explicit name)
+- Cross-stack propagation chains (dbt model → Python pipeline → Airflow DAG)
+
+**Artifact:** `02-consumer-inventory.md` — an impact tree showing every affected node with impact type, break classification, stack, and full propagation path from the changed object.
 
 ### Stage 3 — Assess risk
 
