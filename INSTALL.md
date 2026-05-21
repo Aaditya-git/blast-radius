@@ -5,17 +5,25 @@
 - Claude Code CLI (any version)
 - A git repo containing dbt, SQL, Python, notebook, or Airflow YAML files
 
-## Install the skill
+## Install via Claude Code (recommended)
 
 ```bash
-# Option 1: copy
-cp -r skill/ ~/.claude/skills/blast-radius/
-
-# Option 2: symlink (picks up updates automatically)
-ln -s "$(pwd)/skill" ~/.claude/skills/blast-radius
+claude plugins install github:Aaditya-git/blast-radius
 ```
 
 That's it. No npm install, no config file, no cloud integration.
+
+## Manual install (alternative)
+
+```bash
+git clone https://github.com/Aaditya-git/blast-radius
+cd blast-radius
+
+# Symlink (picks up updates automatically)
+ln -s "$(pwd)/skills" ~/.claude/skills/blast-radius
+```
+
+Restart Claude Code after installing.
 
 ## Invoke the skill
 
@@ -60,4 +68,14 @@ You can invoke a single stage:
 
 ```
 > Use the blast-radius skill, Stage 2 only. What depends on stg_customers?
+```
+
+## Uninstall
+
+```bash
+# If installed via claude plugins
+claude plugins uninstall blast-radius
+
+# If installed manually
+rm -rf ~/.claude/skills/blast-radius
 ```

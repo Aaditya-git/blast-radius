@@ -85,7 +85,7 @@ Every file type in the repo is analyzed — not a predefined list of extensions.
 
 ```bash
 # Install (one time)
-cp -r skill/ ~/.claude/skills/blast-radius/
+claude plugins install github:Aaditya-git/blast-radius
 ```
 
 Open Claude Code in your repo:
@@ -123,7 +123,7 @@ docs/data-changes/<YYYY-MM-DD>-<change-slug>/
 ## Repo layout
 
 ```
-skill/                      ← install this to ~/.claude/skills/blast-radius/
+skills/                     ← installed automatically via claude plugins install
   SKILL.md                  ← skill entry point and workflow
   references/
     stage-1-classify.md
@@ -142,6 +142,29 @@ tests/
     07-empty-repo/
   runs/                     ← actual skill output for each scenario
     jaffle-shop/            ← real-world validation run
+```
+
+## Disabling blast-radius
+
+**Skip a single run** — when Claude asks "continue?" at any stage, say "stop" to halt the workflow immediately.
+
+**Disable for a specific project** — add this line to the project's `CLAUDE.md`:
+```
+Do not use the blast-radius skill in this project.
+```
+
+**Disable globally for a session** — tell Claude at the start of the conversation:
+```
+Disable blast-radius for this session.
+```
+
+**Uninstall completely:**
+```bash
+# If installed via claude plugins
+claude plugins uninstall blast-radius
+
+# If installed manually
+rm -rf ~/.claude/skills/blast-radius
 ```
 
 ## Installation
