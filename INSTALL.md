@@ -8,10 +8,11 @@
 ## Install via Claude Code (recommended)
 
 ```bash
-claude plugins install github:Aaditya-git/blast-radius
+claude plugins marketplace add github:Aaditya-git/blast-radius
+claude plugins install blast-radius
 ```
 
-That's it. No npm install, no config file, no cloud integration.
+No npm install, no config file, no cloud integration.
 
 ## Manual install (alternative)
 

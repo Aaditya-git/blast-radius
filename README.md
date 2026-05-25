@@ -85,7 +85,8 @@ Every file type in the repo is analyzed — not a predefined list of extensions.
 
 ```bash
 # Install (one time)
-claude plugins install github:Aaditya-git/blast-radius
+claude plugins marketplace add github:Aaditya-git/blast-radius
+claude plugins install blast-radius
 ```
 
 Open Claude Code in your repo:
